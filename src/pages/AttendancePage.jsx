@@ -1,0 +1,351 @@
+import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { X, Check, X as Cross, Loader2, UploadCloud, Save, Trash2, ArrowLeft, BarChart2 } from 'lucide-react';
+import { db, storage, auth } from '../utils/firebase';
+import { collection, deleteDoc, doc, updateDoc, writeBatch, query, where, getDocs } from 'firebase/firestore';
+import { getFunctions, httpsCallable } from 'firebase/functions';
+import { ref, uploadString } from 'firebase/storage';
+import { onAuthStateChanged } from 'firebase/auth';
+
+export default function AttendancePage() {
+  const [attendanceList, setAttendanceList] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [isParsingAI, setIsParsingAI] = useState(false);
+  const [user, setUser] = useState(null);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      if (currentUser) {
+        fetchAttendance(currentUser.uid);
+      } else {
+        setLoading(false);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const fetchAttendance = async (uid) => {
+    setLoading(true);
+    try {
+      const q = query(collection(db, 'attendance'), where('userId', '==', uid));
+      const snap = await getDocs(q);
+      const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setAttendanceList(data);
+    } catch (err) {
+      console.error("Failed to fetch attendance:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleFileUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !user) return;
+
+    setIsParsingAI(true);
+    try {
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        const base64String = reader.result.split(',')[1];
+        
+        try {
+          const timestamp = Date.now();
+          const storageRef = ref(storage, `attendance_uploads/${user.uid}/${timestamp}.jpg`);
+          await uploadString(storageRef, base64String, 'base64', { contentType: file.type }).catch(e => console.error(e));
+
+          const functions = getFunctions();
+          const parseAttendance = httpsCallable(functions, 'parseAttendanceImage');
+          const result = await parseAttendance({
+            base64Image: base64String,
+            mimeType: file.type
+          });
+
+          const extracted = result.data.attendance;
+          if (!extracted || extracted.length === 0) {
+            alert("Could not extract attendance from image.");
+            setIsParsingAI(false);
+            return;
+          }
+
+          const batch = writeBatch(db);
+          const newItems = [];
+          for (const subj of extracted) {
+            const newRef = doc(collection(db, 'attendance'));
+            const data = {
+              userId: user.uid,
+              subject: subj.subject,
+              totalClasses: parseInt(subj.totalClasses) || 0,
+              attendedClasses: parseInt(subj.attendedClasses) || 0
+            };
+            batch.set(newRef, data);
+            newItems.push({ id: newRef.id, ...data });
+          }
+          await batch.commit();
+          setAttendanceList(prev => [...prev, ...newItems]);
+
+        } catch (err) {
+          console.error("AI parsing failed:", err);
+          alert("Failed to parse image.");
+        } finally {
+          setIsParsingAI(false);
+        }
+      };
+      reader.readAsDataURL(file);
+    } catch (err) {
+      console.error(err);
+      setIsParsingAI(false);
+    }
+    e.target.value = null;
+  };
+
+  const handleUpdate = async (id, field, value) => {
+    try {
+      await updateDoc(doc(db, 'attendance', id), { [field]: parseInt(value) || 0 });
+      setAttendanceList(prev => prev.map(item => item.id === id ? { ...item, [field]: parseInt(value) || 0 } : item));
+    } catch (err) {
+      console.error("Update failed:", err);
+    }
+  };
+
+  const handleMark = async (item, attended) => {
+    const newTotal = item.totalClasses + 1;
+    const newAttended = attended ? item.attendedClasses + 1 : item.attendedClasses;
+    try {
+      await updateDoc(doc(db, 'attendance', item.id), {
+        totalClasses: newTotal,
+        attendedClasses: newAttended
+      });
+      setAttendanceList(prev => prev.map(i => i.id === item.id ? { ...i, totalClasses: newTotal, attendedClasses: newAttended } : i));
+    } catch (err) {
+      console.error("Marking failed:", err);
+    }
+  };
+
+  const handleDelete = async (id) => {
+    if (confirm("Delete this subject?")) {
+      await deleteDoc(doc(db, 'attendance', id));
+      setAttendanceList(prev => prev.filter(i => i.id !== id));
+    }
+  };
+
+  if (loading && attendanceList.length === 0) {
+    return (
+      <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <Loader2 size={40} className="animate-spin text-indigo-500" style={{ color: '#6366F1' }} />
+      </div>
+    );
+  }
+
+  let totalOverall = 0;
+  let attendedOverall = 0;
+  
+  attendanceList.forEach(item => {
+    totalOverall += item.totalClasses;
+    attendedOverall += item.attendedClasses;
+  });
+
+  const getNeededClasses = (attended, total, targetPercent) => {
+    if (total === 0) return 0;
+    const current = attended / total;
+    if (current >= targetPercent) return 0;
+    const needed = (targetPercent * total - attended) / (1 - targetPercent);
+    return Math.ceil(needed);
+  };
+
+  const overallPercent = totalOverall > 0 ? ((attendedOverall / totalOverall) * 100).toFixed(1) : 0;
+  const overallNeeded = getNeededClasses(attendedOverall, totalOverall, 0.75);
+
+  const getPercentageColor = (pct) => {
+    if (pct >= 75) return '#34D399';
+    if (pct >= 60) return '#FBBF24';
+    return '#F87171';
+  };
+
+  return (
+    <div style={{ padding: '24px', maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '32px', minHeight: '100vh', animation: 'fadeIn 0.5s ease-out' }}>
+      
+      {/* Header */}
+      <div className="glass-panel" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '24px 32px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+          <button 
+            onClick={() => navigate('/')} 
+            style={{ 
+              background: 'rgba(255,255,255,0.1)', border: 'none', color: 'white', 
+              width: '40px', height: '40px', borderRadius: '50%', display: 'flex', 
+              alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'all 0.2s' 
+            }}
+            onMouseOver={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.2)'}
+            onMouseOut={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
+          >
+            <ArrowLeft size={20} />
+          </button>
+          <h1 style={{ margin: 0, fontSize: '28px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <BarChart2 size={32} color="#818CF8" />
+            Attendance Manager
+          </h1>
+        </div>
+        
+        <div style={{ position: 'relative' }}>
+          <input
+            type="file"
+            accept="image/*"
+            onChange={handleFileUpload}
+            style={{ display: 'none' }}
+            id="attendance-upload"
+            disabled={isParsingAI || !user}
+          />
+          <label 
+            htmlFor="attendance-upload"
+            className="glow-button"
+            style={{ 
+              display: 'flex', alignItems: 'center', gap: '8px', 
+              opacity: (isParsingAI || !user) ? 0.6 : 1, 
+              pointerEvents: (isParsingAI || !user) ? 'none' : 'auto',
+              background: 'linear-gradient(135deg, #4F46E5, #3B82F6)',
+              boxShadow: '0 4px 15px rgba(59, 130, 246, 0.4)'
+            }}
+          >
+            {isParsingAI ? <Loader2 size={20} className="animate-spin" /> : <UploadCloud size={20} />}
+            {isParsingAI ? 'Analyzing...' : 'Auto-fill via AI'}
+          </label>
+        </div>
+      </div>
+
+      {/* Stats Overview */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '24px' }}>
+        <div className="glass-panel" style={{ padding: '32px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <div style={{ color: 'var(--text-muted)', fontSize: '14px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 600 }}>Overall Attendance</div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: '12px' }}>
+            <span style={{ fontSize: '48px', fontWeight: 800, color: getPercentageColor(overallPercent) }}>
+              {overallPercent}%
+            </span>
+            <span style={{ color: 'var(--text-muted)', fontSize: '18px', fontWeight: 500 }}>({attendedOverall} / {totalOverall} classes)</span>
+          </div>
+          <div style={{ marginTop: '8px' }}>
+            {overallNeeded > 0 ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(239, 68, 68, 0.1)', color: '#F87171', padding: '12px', borderRadius: '8px', fontWeight: 500 }}>
+                ⚠️ You need to attend the next <strong>{overallNeeded}</strong> classes to hit 75%.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(16, 185, 129, 0.1)', color: '#34D399', padding: '12px', borderRadius: '8px', fontWeight: 500 }}>
+                🎉 You are safely above the 75% overall requirement!
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Table */}
+      <div className="premium-table-wrapper fade-in">
+        {attendanceList.length === 0 && !loading ? (
+          <div style={{ padding: '60px 24px', textAlign: 'center', color: 'var(--text-muted)' }}>
+            <BarChart2 size={48} style={{ margin: '0 auto 16px auto', opacity: 0.5 }} />
+            <h3 style={{ fontSize: '20px', color: 'white', marginBottom: '8px' }}>No Attendance Data</h3>
+            <p>Upload a screenshot of your portal to automatically populate your subjects.</p>
+          </div>
+        ) : (
+          <table className="premium-table">
+            <thead>
+              <tr>
+                <th>Subject</th>
+                <th style={{ textAlign: 'center' }}>Attended</th>
+                <th style={{ textAlign: 'center' }}>Total</th>
+                <th>Performance</th>
+                <th>Target (60%)</th>
+                <th style={{ textAlign: 'center' }}>Mark Today</th>
+                <th style={{ textAlign: 'center' }}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {attendanceList.map(item => {
+                const pct = item.totalClasses > 0 ? (item.attendedClasses / item.totalClasses * 100) : 0;
+                const needed = getNeededClasses(item.attendedClasses, item.totalClasses, 0.60);
+                
+                return (
+                  <tr key={item.id}>
+                    <td style={{ fontWeight: 600, color: 'white', fontSize: '15px' }}>{item.subject}</td>
+                    <td style={{ textAlign: 'center' }}>
+                      <input 
+                        type="number" 
+                        className="premium-input"
+                        style={{ width: '70px', textAlign: 'center', fontSize: '15px', fontWeight: 600 }}
+                        value={item.attendedClasses}
+                        onChange={(e) => handleUpdate(item.id, 'attendedClasses', e.target.value)}
+                      />
+                    </td>
+                    <td style={{ textAlign: 'center' }}>
+                      <input 
+                        type="number" 
+                        className="premium-input"
+                        style={{ width: '70px', textAlign: 'center', fontSize: '15px', fontWeight: 600 }}
+                        value={item.totalClasses}
+                        onChange={(e) => handleUpdate(item.id, 'totalClasses', e.target.value)}
+                      />
+                    </td>
+                    <td>
+                      <div className={`badge badge-${pct >= 75 ? 'green' : (pct >= 60 ? 'orange' : 'red')}`} style={{ fontSize: '14px', padding: '6px 12px' }}>
+                        {pct.toFixed(1)}%
+                      </div>
+                    </td>
+                    <td>
+                      {needed > 0 ? (
+                        <span style={{ color: '#F87171', fontWeight: 600 }}>+{needed} classes</span>
+                      ) : (
+                        <span style={{ color: '#34D399', fontWeight: 600 }}>Safe</span>
+                      )}
+                    </td>
+                    <td>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px' }}>
+                        <button 
+                          onClick={() => handleMark(item, true)} 
+                          style={{ 
+                            background: 'rgba(16, 185, 129, 0.15)', border: '1px solid rgba(16, 185, 129, 0.3)', 
+                            color: '#34D399', width: '36px', height: '36px', borderRadius: '8px', 
+                            display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'all 0.2s' 
+                          }}
+                          onMouseOver={(e) => e.currentTarget.style.background = 'rgba(16, 185, 129, 0.25)'}
+                          onMouseOut={(e) => e.currentTarget.style.background = 'rgba(16, 185, 129, 0.15)'}
+                          title="Attended"
+                        >
+                          <Check size={18} />
+                        </button>
+                        <button 
+                          onClick={() => handleMark(item, false)} 
+                          style={{ 
+                            background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.3)', 
+                            color: '#F87171', width: '36px', height: '36px', borderRadius: '8px', 
+                            display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'all 0.2s' 
+                          }}
+                          onMouseOver={(e) => e.currentTarget.style.background = 'rgba(239, 68, 68, 0.25)'}
+                          onMouseOut={(e) => e.currentTarget.style.background = 'rgba(239, 68, 68, 0.15)'}
+                          title="Missed"
+                        >
+                          <Cross size={18} />
+                        </button>
+                      </div>
+                    </td>
+                    <td style={{ textAlign: 'center' }}>
+                      <button 
+                        onClick={() => handleDelete(item.id)} 
+                        style={{ 
+                          background: 'transparent', border: 'none', color: 'var(--text-muted)', 
+                          cursor: 'pointer', padding: '8px', borderRadius: '8px', transition: 'all 0.2s'
+                        }}
+                        onMouseOver={(e) => { e.currentTarget.style.color = '#F87171'; e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)'; }}
+                        onMouseOut={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = 'transparent'; }}
+                      >
+                        <Trash2 size={20} />
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}

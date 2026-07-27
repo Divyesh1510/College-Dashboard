@@ -1,0 +1,52 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Allow authenticated users to read and write map data and classrooms
+    match /campus_map/{document=**} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+
+    match /saved_classrooms/{document=**} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+
+    // Timetables should only be accessed by the user who owns them
+    match /timetables/{document=**} {
+      allow read: if request.auth != null && (request.auth.uid == resource.data.userId || request.auth.token.email == 'divyeshatla@gmail.com');
+      allow write: if request.auth != null && request.auth.uid == resource.data.userId;
+      // Allow creation if the userId being set matches the authenticated user
+      allow create: if request.auth != null && request.auth.uid == request.resource.data.userId;
+    }
+
+    match /timetable_meta/{document=**} {
+      allow read: if request.auth != null && (request.auth.uid == document || request.auth.token.email == 'divyeshatla@gmail.com');
+      allow write: if request.auth != null && request.auth.uid == document;
+    }
+
+    match /attendance/{document=**} {
+      allow read: if request.auth != null && (request.auth.uid == resource.data.userId || request.auth.token.email == 'divyeshatla@gmail.com');
+      allow write: if request.auth != null && request.auth.uid == resource.data.userId;
+      allow create: if request.auth != null && request.auth.uid == request.resource.data.userId;
+    }
+
+    // User requests
+    match /user_requests/{document=**} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Analytics logs
+    match /loginLogs/{document=**} {
+      allow create: if request.auth != null;
+      allow read: if request.auth != null && request.auth.token.email == 'divyeshatla@gmail.com';
+    }
+
+    match /routeLogs/{document=**} {
+      allow create: if request.auth != null;
+      allow read: if request.auth != null && request.auth.token.email == 'divyeshatla@gmail.com';
+    }
+  }
+}
