@@ -1,9 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { APIProvider } from '@vis.gl/react-google-maps';
 import MainApp from './pages/MainApp';
-import AdminApp from './pages/AdminApp';
-import AdminTimetablesApp from './pages/AdminTimetablesApp';
 import AttendancePage from './pages/AttendancePage';
 import CollegeDashboardHome from './pages/CollegeDashboardHome';
 import Login from './pages/Login';
@@ -11,9 +9,12 @@ import { auth, db } from './utils/firebase';
 import { onAuthStateChanged, signInWithCredential, GoogleAuthProvider } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 
+const AdminApp = lazy(() => import('./pages/AdminApp').catch(() => ({ default: () => <div style={{ color: 'white', textAlign: 'center', padding: '50px' }}>Admin module restricted.</div> })));
+const AdminTimetablesApp = lazy(() => import('./pages/AdminTimetablesApp').catch(() => ({ default: () => <div style={{ color: 'white', textAlign: 'center', padding: '50px' }}>Admin module restricted.</div> })));
+
 function AdminRoute({ user, children }) {
   if (user && user.email === 'divyeshatla@gmail.com') {
-    return children;
+    return <Suspense fallback={<div style={{ color: 'white', textAlign: 'center', padding: '50px' }}>Loading Admin...</div>}>{children}</Suspense>;
   }
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#0F172A', color: 'white', padding: '24px', textAlign: 'center' }}>

@@ -33,4 +33,6 @@ android-app/app/google-services.json
 *.ntvs*
 *.njsproj
 *.sln
-*.sw?
+# Admin pages (Restricted / Excluded from GitHub)
+src/pages/Admin*.jsx
+
