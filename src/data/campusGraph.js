@@ -1,4 +1,4 @@
-// Coordinates are approximate based on a central point for GITAM Hyd
+// Set the center latitude and longitude for your campus
 const CENTER_LAT = 17.5501;
 const CENTER_LNG = 78.1666;
 

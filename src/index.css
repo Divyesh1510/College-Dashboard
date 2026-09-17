@@ -7,8 +7,8 @@
   --text-muted: #94A3B8;
   --border: #334155;
   
-  --gitam-red: #D9252A;
-  --gitam-red-glow: rgba(217, 37, 42, 0.4);
+  --accent-red: #D9252A;
+  --accent-red-glow: rgba(217, 37, 42, 0.4);
 }
 
 * {
@@ -25,7 +25,7 @@ body {
   font-weight: 400;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  overflow: hidden; /* Prevent scrolling for app-like feel */
+  overflow-y: auto;
 }
 
 /* Glassmorphism utility */
@@ -39,7 +39,7 @@ body {
 }
 
 .glow-button {
-  background-color: var(--gitam-red);
+  background-color: var(--accent-red);
   color: white;
   border: none;
   border-radius: 8px;
@@ -47,12 +47,12 @@ body {
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s ease;
-  box-shadow: 0 0 15px var(--gitam-red-glow);
+  box-shadow: 0 0 15px var(--accent-red-glow);
 }
 
 .glow-button:hover {
   transform: translateY(-1px);
-  box-shadow: 0 0 20px var(--gitam-red-glow);
+  box-shadow: 0 0 20px var(--accent-red-glow);
 }
 
 /* Interactive UI Animations */
@@ -136,7 +136,7 @@ body {
   -webkit-backdrop-filter: blur(12px);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 12px;
-  overflow: hidden;
+  overflow-x: auto;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
 }
 .premium-table {

@@ -10,9 +10,9 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['logo.png', 'icons.svg'],
       manifest: {
-        name: 'Campus Nav Gitam Hyd',
-        short_name: 'Campus Nav Gitam Hyd',
-        description: 'Campus Navigation and Mapping Tool',
+        name: 'College Dashboard',
+        short_name: 'College Dashboard',
+        description: 'Comprehensive College Navigation, Attendance, & Schedule Portal',
         theme_color: '#0F172A',
         background_color: '#0F172A',
         display: 'standalone',
@@ -24,6 +24,9 @@ export default defineConfig({
             purpose: 'any maskable'
           }
         ]
+      },
+      workbox: {
+        maximumFileSizeToCacheInBytes: 5 * 1024 * 1024
       }
     })
   ],

@@ -5,6 +5,7 @@ import MainApp from './pages/MainApp';
 import AdminApp from './pages/AdminApp';
 import AdminTimetablesApp from './pages/AdminTimetablesApp';
 import AttendancePage from './pages/AttendancePage';
+import CollegeDashboardHome from './pages/CollegeDashboardHome';
 import Login from './pages/Login';
 import { auth, db } from './utils/firebase';
 import { onAuthStateChanged, signInWithCredential, GoogleAuthProvider } from 'firebase/auth';
@@ -18,7 +19,7 @@ function AdminRoute({ user, children }) {
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#0F172A', color: 'white', padding: '24px', textAlign: 'center' }}>
       <h1 style={{ color: '#ef4444', marginBottom: '16px' }}>Access Denied</h1>
       <p style={{ color: 'var(--text-muted)' }}>You must be the administrator to access the mapping tools.</p>
-      <a href="/" style={{ marginTop: '24px', color: '#3B82F6', textDecoration: 'none', fontWeight: 'bold' }}>Return to Map</a>
+      <a href="/" style={{ marginTop: '24px', color: '#3B82F6', textDecoration: 'none', fontWeight: 'bold' }}>Return to Dashboard</a>
     </div>
   );
 }
@@ -88,14 +89,13 @@ function App() {
           <h2 style={{ fontSize: '32px', fontWeight: 'bold', marginBottom: '32px', color: 'white' }}>Terms and Conditions</h2>
           
           <div style={{ flex: 1, fontSize: '16px', color: '#CBD5E1', lineHeight: 1.8 }}>
-            <p>Welcome to Campus Nav!</p>
+            <p>Welcome to College Dashboard!</p>
             <p>By using this application, you agree to the following terms:</p>
             <ul style={{ paddingLeft: '24px', marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
               <li>The map data and routing algorithms are provided "as-is" for informational purposes.</li>
               <li>We are not responsible for any inaccuracies in routing or physical changes to campus layout.</li>
               <li>You agree to share your location data solely for the purpose of live navigation features while using the app.</li>
               <li>Please remain aware of your surroundings and observe all physical safety signs and barriers on campus.</li>
-              <li><strong style={{ color: '#ef4444' }}>Disclaimer:</strong> This application is not officially affiliated with or created by Gitam University. It has been developed through manual mapping and Google Maps assistance by <strong>Atla Divyesh Reddy - 2024190852</strong>.</li>
             </ul>
           </div>
 
@@ -116,7 +116,8 @@ function App() {
     <APIProvider apiKey={API_KEY}>
       <BrowserRouter>
         <Routes>
-          <Route path="/" element={<MainApp />} />
+          <Route path="/" element={<CollegeDashboardHome />} />
+          <Route path="/map" element={<MainApp />} />
           <Route path="/attendance" element={<AttendancePage />} />
           <Route path="/redev" element={
             <AdminRoute user={user}>

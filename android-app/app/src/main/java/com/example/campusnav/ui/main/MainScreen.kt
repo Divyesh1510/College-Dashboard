@@ -8,6 +8,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.School
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -25,6 +26,7 @@ import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.ktx.auth
 import com.google.firebase.ktx.Firebase
 import com.example.campusnav.ui.map.MapScreen
+import com.example.campusnav.ui.attendance.AttendanceScreen
 
 @Composable
 fun MainScreen(modifier: Modifier = Modifier) {
@@ -51,17 +53,25 @@ fun MainScreen(modifier: Modifier = Modifier) {
                         selected = selectedTab == 1,
                         onClick = { selectedTab = 1 }
                     )
+                    NavigationBarItem(
+                        icon = { Icon(Icons.Filled.CheckCircle, contentDescription = "Attendance") },
+                        label = { Text("Attendance") },
+                        selected = selectedTab == 2,
+                        onClick = { selectedTab = 2 }
+                    )
                 }
             }
         ) { innerPadding ->
             Box(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
                 if (selectedTab == 0) {
                     MapScreen()
-                } else {
+                } else if (selectedTab == 1) {
                     TimetableScreen(onSignOut = {
                         Firebase.auth.signOut()
                         user = null
                     })
+                } else {
+                    AttendanceScreen()
                 }
             }
         }

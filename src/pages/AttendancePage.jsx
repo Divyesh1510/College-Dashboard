@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { X, Check, X as Cross, Loader2, UploadCloud, Save, Trash2, ArrowLeft, BarChart2 } from 'lucide-react';
+import { X, Check, X as Cross, Loader2, UploadCloud, Save, Trash2, ArrowLeft, BarChart2, Clock, MapPin, Calendar } from 'lucide-react';
 import { db, storage, auth } from '../utils/firebase';
 import { collection, deleteDoc, doc, updateDoc, writeBatch, query, where, getDocs } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
@@ -9,6 +9,10 @@ import { onAuthStateChanged } from 'firebase/auth';
 
 export default function AttendancePage() {
   const [attendanceList, setAttendanceList] = useState([]);
+  const [todayClasses, setTodayClasses] = useState([]);
+  const [allTimetables, setAllTimetables] = useState([]);
+  const [markedClasses, setMarkedClasses] = useState({});
+  const [targetDates, setTargetDates] = useState({});
   const [loading, setLoading] = useState(true);
   const [isParsingAI, setIsParsingAI] = useState(false);
   const [user, setUser] = useState(null);
@@ -33,8 +37,24 @@ export default function AttendancePage() {
       const snap = await getDocs(q);
       const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setAttendanceList(data);
+
+      const ttQ = query(collection(db, 'timetables'), where('userId', '==', uid));
+      const ttSnap = await getDocs(ttQ);
+      const allTts = ttSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setAllTimetables(allTts);
+      
+      const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      const todayIndex = new Date().getDay();
+      const todayName = days[todayIndex];
+
+      const todays = allTts.filter(c => {
+        if (c.day) return c.day.toLowerCase() === todayName.toLowerCase();
+        return c.dayOfWeek === todayIndex;
+      }).sort((a, b) => (a.startTime || '').localeCompare(b.startTime || ''));
+      
+      setTodayClasses(todays);
     } catch (err) {
-      console.error("Failed to fetch attendance:", err);
+      console.error("Failed to fetch attendance or timetables:", err);
     } finally {
       setLoading(false);
     }
@@ -123,6 +143,31 @@ export default function AttendancePage() {
     }
   };
 
+  const handleMarkTodayClass = async (ttClass, attended) => {
+    // Find if subject exists in attendanceList
+    const existingItem = attendanceList.find(a => a.subject.toLowerCase() === ttClass.subject.toLowerCase());
+    
+    if (existingItem) {
+      await handleMark(existingItem, attended);
+    } else {
+      // Create new attendance record
+      const newRef = doc(collection(db, 'attendance'));
+      const data = {
+        userId: user.uid,
+        subject: ttClass.subject,
+        totalClasses: 1,
+        attendedClasses: attended ? 1 : 0
+      };
+      try {
+        await writeBatch(db).set(newRef, data).commit();
+        setAttendanceList(prev => [...prev, { id: newRef.id, ...data }]);
+      } catch (err) {
+        console.error("Failed to create new attendance record:", err);
+      }
+    }
+    setMarkedClasses(prev => ({ ...prev, [ttClass.id]: true }));
+  };
+
   const handleDelete = async (id) => {
     if (confirm("Delete this subject?")) {
       await deleteDoc(doc(db, 'attendance', id));
@@ -163,8 +208,43 @@ export default function AttendancePage() {
     return '#F87171';
   };
 
+  const getClassesUntilDate = (subject, targetDateStr) => {
+    if (!targetDateStr || !allTimetables.length) return 0;
+    
+    const targetDate = new Date(targetDateStr);
+    targetDate.setHours(23, 59, 59, 999);
+    
+    const now = new Date();
+    if (targetDate <= now) return 0;
+
+    let count = 0;
+    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    
+    const subjectClasses = allTimetables.filter(t => t.subject.toLowerCase() === subject.toLowerCase());
+    if (subjectClasses.length === 0) return 0;
+
+    // Iterate day by day
+    const current = new Date();
+    current.setDate(current.getDate() + 1); // Start from tomorrow
+
+    while (current <= targetDate) {
+      const dayIndex = current.getDay();
+      const dayName = days[dayIndex];
+      
+      const classesOnDay = subjectClasses.filter(c => {
+        if (c.day) return c.day.toLowerCase() === dayName.toLowerCase();
+        return c.dayOfWeek === dayIndex;
+      }).length;
+      
+      count += classesOnDay;
+      current.setDate(current.getDate() + 1);
+    }
+    
+    return count;
+  };
+
   return (
-    <div style={{ padding: '24px', maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '32px', minHeight: '100vh', animation: 'fadeIn 0.5s ease-out' }}>
+    <div style={{ padding: '24px', maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '32px', minHeight: '100vh', boxSizing: 'border-box', animation: 'fadeIn 0.5s ease-out' }}>
       
       {/* Header */}
       <div className="glass-panel" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '24px 32px' }}>
@@ -213,6 +293,68 @@ export default function AttendancePage() {
         </div>
       </div>
 
+      {/* Today's Schedule */}
+      {todayClasses.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 600, color: 'white', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Clock size={24} color="#818CF8" />
+            Today's Schedule
+          </h2>
+          <div style={{ display: 'flex', gap: '16px', overflowX: 'auto', paddingBottom: '8px', WebkitOverflowScrolling: 'touch' }}>
+            {todayClasses.map(cls => (
+              <div 
+                key={cls.id} 
+                className="glass-panel" 
+                style={{ 
+                  minWidth: '280px', padding: '20px', display: 'flex', flexDirection: 'column', gap: '12px',
+                  opacity: markedClasses[cls.id] ? 0.5 : 1,
+                  transition: 'opacity 0.3s'
+                }}
+              >
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: '18px', color: 'white' }}>{cls.subject}</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--text-muted)', fontSize: '13px', marginTop: '4px' }}>
+                    <Clock size={14} /> {cls.startTime} - {cls.endTime}
+                  </div>
+                  {cls.room && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--text-muted)', fontSize: '13px', marginTop: '4px' }}>
+                      <MapPin size={14} /> {cls.room}
+                    </div>
+                  )}
+                </div>
+                
+                <div style={{ marginTop: 'auto', display: 'flex', gap: '12px' }}>
+                  <button 
+                    onClick={() => handleMarkTodayClass(cls, true)}
+                    disabled={markedClasses[cls.id]}
+                    style={{ 
+                      flex: 1, background: 'rgba(16, 185, 129, 0.15)', border: '1px solid rgba(16, 185, 129, 0.3)', 
+                      color: '#34D399', padding: '8px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', 
+                      gap: '8px', cursor: markedClasses[cls.id] ? 'default' : 'pointer', transition: 'all 0.2s',
+                      fontWeight: 600, fontSize: '14px'
+                    }}
+                  >
+                    <Check size={18} /> Attended
+                  </button>
+                  <button 
+                    onClick={() => handleMarkTodayClass(cls, false)}
+                    disabled={markedClasses[cls.id]}
+                    style={{ 
+                      flex: 1, background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.3)', 
+                      color: '#F87171', padding: '8px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', 
+                      gap: '8px', cursor: markedClasses[cls.id] ? 'default' : 'pointer', transition: 'all 0.2s',
+                      fontWeight: 600, fontSize: '14px'
+                    }}
+                  >
+                    <Cross size={18} /> Missed
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Stats Overview */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '24px' }}>
         <div className="glass-panel" style={{ padding: '32px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -253,7 +395,9 @@ export default function AttendancePage() {
                 <th style={{ textAlign: 'center' }}>Attended</th>
                 <th style={{ textAlign: 'center' }}>Total</th>
                 <th>Performance</th>
-                <th>Target (60%)</th>
+                <th>Target (75%)</th>
+                <th>Target Date</th>
+                <th>By Date Need</th>
                 <th style={{ textAlign: 'center' }}>Mark Today</th>
                 <th style={{ textAlign: 'center' }}>Actions</th>
               </tr>
@@ -261,7 +405,14 @@ export default function AttendancePage() {
             <tbody>
               {attendanceList.map(item => {
                 const pct = item.totalClasses > 0 ? (item.attendedClasses / item.totalClasses * 100) : 0;
-                const needed = getNeededClasses(item.attendedClasses, item.totalClasses, 0.60);
+                const needed = getNeededClasses(item.attendedClasses, item.totalClasses, 0.75);
+                
+                const targetDate = targetDates[item.id] || '';
+                const futureClasses = getClassesUntilDate(item.subject, targetDate);
+                const totalWithFuture = item.totalClasses + futureClasses;
+                const requiredAttended = Math.ceil(totalWithFuture * 0.75);
+                const additionalNeeded = Math.max(0, requiredAttended - item.attendedClasses);
+                const isPossible = additionalNeeded <= futureClasses;
                 
                 return (
                   <tr key={item.id}>
@@ -294,6 +445,33 @@ export default function AttendancePage() {
                         <span style={{ color: '#F87171', fontWeight: 600 }}>+{needed} classes</span>
                       ) : (
                         <span style={{ color: '#34D399', fontWeight: 600 }}>Safe</span>
+                      )}
+                    </td>
+                    <td>
+                      <input 
+                        type="date" 
+                        className="premium-input" 
+                        style={{ padding: '6px 10px', fontSize: '13px' }}
+                        value={targetDate}
+                        onChange={(e) => setTargetDates(prev => ({ ...prev, [item.id]: e.target.value }))}
+                        min={new Date().toISOString().split('T')[0]}
+                      />
+                    </td>
+                    <td>
+                      {targetDate ? (
+                        <div style={{ fontSize: '13px', lineHeight: 1.4 }}>
+                          {isPossible ? (
+                            additionalNeeded > 0 ? (
+                              <><span style={{ color: '#FBBF24', fontWeight: 600 }}>Attend {additionalNeeded}</span> / {futureClasses} upcoming</>
+                            ) : (
+                              <span style={{ color: '#34D399', fontWeight: 600 }}>Safe</span>
+                            )
+                          ) : (
+                            <span style={{ color: '#F87171', fontWeight: 600 }}>Impossible ({additionalNeeded} needed, {futureClasses} left)</span>
+                          )}
+                        </div>
+                      ) : (
+                        <span style={{ color: 'var(--text-muted)', fontSize: '13px' }}>Select date</span>
                       )}
                     </td>
                     <td>

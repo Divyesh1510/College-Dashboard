@@ -9,6 +9,7 @@
     "source": "functions"
   },
   "hosting": {
+    "site": "college-dashboard-cd",
     "public": "dist",
     "ignore": [
       "firebase.json",

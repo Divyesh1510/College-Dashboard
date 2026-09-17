@@ -777,7 +777,7 @@ export default function MainApp() {
             <div>
               <h2 style={{ fontSize: '24px', fontWeight: 800, margin: '0 0 8px 0', color: 'white' }}>Location Required</h2>
               <p style={{ color: 'var(--text-muted)', fontSize: '15px', margin: 0, lineHeight: 1.5 }}>
-                Campus Nav needs access to your location to provide accurate routing and navigation across the GITAM campus.
+                College Dashboard needs access to your location to provide accurate campus routing and navigation.
               </p>
             </div>
             <button 
@@ -808,9 +808,18 @@ export default function MainApp() {
         alignItems: 'flex-start',
         gap: '8px'
       }}>
-        <div className="glass-panel" style={{ padding: '8px 12px', display: 'inline-flex', alignItems: 'center', gap: '6px', pointerEvents: 'auto' }}>
-          <img src="/logo.png" alt="Logo" style={{ width: '20px', height: '20px', objectFit: 'contain' }} />
-          <h1 style={{ fontSize: '14px', margin: 0, fontWeight: 700 }}>Campus Nav Gitam Hyd</h1>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', pointerEvents: 'auto' }}>
+          <button 
+            onClick={() => navigate('/')} 
+            className="glass-panel"
+            style={{ border: 'none', color: 'white', padding: '6px 10px', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: 600 }}
+          >
+            ← Dashboard
+          </button>
+          <div className="glass-panel" style={{ padding: '8px 12px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+            <img src="/logo.png" alt="Logo" style={{ width: '20px', height: '20px', objectFit: 'contain' }} />
+            <h1 style={{ fontSize: '14px', margin: 0, fontWeight: 700 }}>College Dashboard</h1>
+          </div>
         </div>
         
         {isOffline && (

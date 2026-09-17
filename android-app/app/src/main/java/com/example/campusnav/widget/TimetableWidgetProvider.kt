@@ -19,7 +19,14 @@ class TimetableWidgetProvider : AppWidgetProvider() {
 
     override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
         val prefs = context.getSharedPreferences("widget_prefs", Context.MODE_PRIVATE)
-        val offset = prefs.getInt("day_offset", 0)
+        // Reset to today on standard periodic updates
+        prefs.edit().putInt("day_offset", 0).apply()
+        val offset = 0
+        
+        refreshWidget(context, appWidgetManager, appWidgetIds, offset)
+    }
+
+    private fun refreshWidget(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray, offset: Int) {
 
         for (appWidgetId in appWidgetIds) {
             val intent = Intent(context, TimetableWidgetService::class.java).apply {
@@ -87,7 +94,7 @@ class TimetableWidgetProvider : AppWidgetProvider() {
             val appWidgetIds = appWidgetManager.getAppWidgetIds(ComponentName(context, TimetableWidgetProvider::class.java))
             
             // Trigger update
-            onUpdate(context, appWidgetManager, appWidgetIds)
+            refreshWidget(context, appWidgetManager, appWidgetIds, offset)
             appWidgetManager.notifyAppWidgetViewDataChanged(appWidgetIds, R.id.widget_list)
         }
     }

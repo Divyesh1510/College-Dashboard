@@ -3,6 +3,7 @@ plugins {
   alias(libs.plugins.compose.compiler)
   alias(libs.plugins.kotlin.serialization)
   id("com.google.gms.google-services")
+  kotlin("kapt")
 }
 
 android {
@@ -92,4 +93,10 @@ dependencies {
   implementation(libs.androidx.navigation3.ui)
   implementation(libs.androidx.navigation3.runtime)
   implementation(libs.androidx.lifecycle.viewmodel.navigation3)
+
+  // Room Database
+  val room_version = "2.6.1"
+  implementation("androidx.room:room-runtime:$room_version")
+  implementation("androidx.room:room-ktx:$room_version")
+  kapt("androidx.room:room-compiler:$room_version")
 }

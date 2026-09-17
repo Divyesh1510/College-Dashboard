@@ -7,10 +7,22 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Node modules & build output
 node_modules
 dist
 dist-ssr
 *.local
+
+# Environment variables & Secret API Keys (DO NOT COMMIT)
+.env
+.env.*
+!.env.example
+functions/.env
+functions/.env.*
+!functions/.env.example
+
+# Android Firebase credentials (if present)
+android-app/app/google-services.json
 
 # Editor directories and files
 .vscode/*
@@ -22,9 +34,3 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-
-# API and Private
-.env
-.env.*
-functions/
-.firebaserc

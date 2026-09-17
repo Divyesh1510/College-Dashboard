@@ -145,7 +145,7 @@ const MapController = ({ pathCoordinates, isNavigating, startCoords, userLocatio
 };
 
 export default function CampusMap({ startNode, endNode, calculatedPath, pathCoordinates, alternatePathsCoords, selectedPathIndex = 0, nodes, blocks, edges, isNavigating, userLocation, userHeading, isDarkMode, isSatellite = false, isFollowingUser = true, highlightedPOICategory, onDragStart, onNodeClick, onPathSelect }) {
-  // Center of GITAM Hyd
+  // Center of campus
   const defaultCenter = { lat: 17.5501, lng: 78.1666 };
 
   // Light Mode Styles (Hide labels)
@@ -168,7 +168,7 @@ export default function CampusMap({ startNode, endNode, calculatedPath, pathCoor
     { featureType: "landscape.man_made", elementType: "geometry", stylers: [{ color: "#1e293b" }] }
   ];
 
-  // Confine map to GITAM campus bounds
+  // Confine map to campus bounds
   const campusBounds = {
     north: 17.5560,
     south: 17.5440,

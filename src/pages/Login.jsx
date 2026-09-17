@@ -125,9 +125,9 @@ export default function Login() {
               background: 'linear-gradient(to right, #ffffff, #94A3B8)',
               WebkitBackgroundClip: 'text',
               WebkitTextFillColor: 'transparent'
-            }}>Campus Nav</h1>
+            }}>College Dashboard</h1>
             <p style={{ color: '#94A3B8', fontSize: '16px', margin: '8px 0 0 0', fontWeight: 500 }}>
-              The smartest way to navigate GITAM.
+              Your all-in-one portal for navigation, attendance & timetables.
             </p>
           </div>
         </div>
