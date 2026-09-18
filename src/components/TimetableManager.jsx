@@ -2,14 +2,14 @@ import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Calendar, Plus, Trash2, Clock, MapPin, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { db, storage } from '../utils/firebase';
-import { collection, addDoc, deleteDoc, doc, writeBatch, setDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, deleteDoc, doc, writeBatch, setDoc, serverTimestamp, query, where, getDocs } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { ref, uploadString, getDownloadURL } from 'firebase/storage';
 import SearchableSelect from './SearchableSelect';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-export default function TimetableManager({ isOpen, onClose, user, nodes, timetables }) {
+export default function TimetableManager({ isOpen, onClose, user, nodes, timetables, fetchTimetables, setUploadedImageUrl }) {
   const [showForm, setShowForm] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isParsingAI, setIsParsingAI] = useState(false);
@@ -18,7 +18,7 @@ export default function TimetableManager({ isOpen, onClose, user, nodes, timetab
   const [subject, setSubject] = useState('');
   const [faculty, setFaculty] = useState('');
   const [roomNodeId, setRoomNodeId] = useState('');
-  const [dayOfWeek, setDayOfWeek] = useState(new Date().getDay());
+  const [dayOfWeek, setDayOfWeek] = useState(1); // Monday
   const [startTime, setStartTime] = useState('09:00');
   const [endTime, setEndTime] = useState('10:00');
 
@@ -26,15 +26,14 @@ export default function TimetableManager({ isOpen, onClose, user, nodes, timetab
 
   if (!isOpen) return null;
 
-  const handleAddClass = async () => {
-    if (!subject || !roomNodeId || !startTime || !endTime) {
-      alert("Please fill all fields.");
-      return;
-    }
+  const handleAddClass = async (e) => {
+    if (e) e.preventDefault();
+    if (!subject || !user) return;
+
     setIsSubmitting(true);
     try {
-      const roomName = nodes[roomNodeId]?.name || '';
-      const dayName = DAYS[parseInt(dayOfWeek)] || '';
+      const selectedNode = nodes[roomNodeId];
+      const roomName = selectedNode ? (selectedNode.name || selectedNode.label || '') : '';
 
       await addDoc(collection(db, 'timetables'), {
         userId: user.uid,
@@ -43,119 +42,185 @@ export default function TimetableManager({ isOpen, onClose, user, nodes, timetab
         roomNodeId,
         room: roomName,
         dayOfWeek: parseInt(dayOfWeek),
-        day: dayName,
+        day: DAYS[dayOfWeek],
         startTime,
         endTime
       });
-      setShowForm(false);
+
+      // Reset form
       setSubject('');
       setFaculty('');
       setRoomNodeId('');
-      setStartTime('09:00');
-      setEndTime('10:00');
+      setShowForm(false);
+      if (fetchTimetables) fetchTimetables();
     } catch (err) {
-      console.error("Error adding class:", err);
-      alert("Failed to add class.");
+      console.error("Error adding timetable entry:", err);
+      alert("Failed to save class schedule.");
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleDelete = async (id) => {
-    if (confirm("Are you sure you want to delete this class?")) {
-      try {
-        await deleteDoc(doc(db, 'timetables', id));
-      } catch (err) {
-        console.error("Error deleting class:", err);
-      }
+  const handleDeleteClass = async (id) => {
+    try {
+      await deleteDoc(doc(db, 'timetables', id));
+      if (fetchTimetables) fetchTimetables();
+    } catch (err) {
+      console.error("Error deleting class:", err);
     }
   };
 
   const handleFileUpload = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0 || !user) return;
 
     setIsParsingAI(true);
     try {
-      // Convert to base64
-      const reader = new FileReader();
-      reader.onloadend = async () => {
-        const base64String = reader.result.split(',')[1];
-        
+      const functions = getFunctions();
+      const parseTimetable = httpsCallable(functions, 'parseTimetableImage');
+
+      // Fetch existing timetables for smart merging
+      const q = query(collection(db, 'timetables'), where('userId', '==', user.uid));
+      const snap = await getDocs(q);
+
+      const slotMap = new Map();
+      snap.docs.forEach(docSnap => {
+        const data = docSnap.data();
+        const normKey = `${data.dayOfWeek || 0}_${(data.startTime || '').trim().toLowerCase()}_${(data.subject || '').trim().toLowerCase()}`;
+        slotMap.set(normKey, {
+          id: docSnap.id,
+          data: { ...data }
+        });
+      });
+
+      let totalAddedOrUpdated = 0;
+
+      for (const file of files) {
         try {
-          const functions = getFunctions();
-          const parseTimetable = httpsCallable(functions, 'parseTimetableImage');
-          const result = await parseTimetable({
-            base64Image: base64String,
-            mimeType: file.type
+          const base64String = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result.split(',')[1]);
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
           });
 
-          const classes = result.data.classes;
-          if (!classes || classes.length === 0) {
-            alert("Could not find any classes in the image.");
-            setIsParsingAI(false);
-            return;
-          }
-
-          // Batch add all classes to Firestore
-          const batch = writeBatch(db);
-
-          // Also upload image to storage and save URL
           try {
             const timestamp = Date.now();
-            const storageRef = ref(storage, `timetable_uploads/${user.uid}/${timestamp}.jpg`);
+            const storageRef = ref(storage, `timetable_uploads/${user.uid}/${timestamp}_${Math.random().toString(36).substring(7)}.jpg`);
             await uploadString(storageRef, base64String, 'base64', { contentType: file.type });
             const imageUrl = await getDownloadURL(storageRef);
-            
-            // Save meta to firestore
+            if (setUploadedImageUrl) setUploadedImageUrl(imageUrl);
+
             await setDoc(doc(db, 'timetable_meta', user.uid), {
               imageUrl,
               updatedAt: serverTimestamp()
             });
           } catch (storageErr) {
             console.error("Failed to upload screenshot to storage", storageErr);
-            // We can continue even if storage fails
           }
-          for (const cls of classes) {
-            // Try to find a matching node for the room string if possible, or just save the string
-            // For now, we save it as room name without roomNodeId (or attempt a simple match)
-            let matchedNodeId = '';
-            for (const [id, node] of Object.entries(nodes)) {
-              if (node.name && node.name.toLowerCase().includes(cls.room.toLowerCase())) {
-                matchedNodeId = id;
-                break;
+
+          const result = await parseTimetable({
+            base64Image: base64String,
+            mimeType: file.type
+          });
+
+          const classes = result.data?.classes || [];
+          if (classes.length > 0) {
+            totalAddedOrUpdated += classes.length;
+            for (const cls of classes) {
+              let matchedNodeId = '';
+              for (const [id, node] of Object.entries(nodes || {})) {
+                if (node.name && node.name.toLowerCase().includes((cls.room || '').toLowerCase())) {
+                  matchedNodeId = id;
+                  break;
+                }
+              }
+
+              const dayIndex = DAYS.findIndex(d => d.toLowerCase() === (cls.day || '').toLowerCase());
+              const dayVal = dayIndex !== -1 ? dayIndex : 1;
+              const dayName = dayIndex !== -1 ? DAYS[dayIndex] : 'Monday';
+              const startTimeStr = cls.startTime || '09:00';
+              const endTimeStr = cls.endTime || '10:00';
+              const subjectName = (cls.subject || '').trim();
+
+              const normKey = `${dayVal}_${startTimeStr.trim().toLowerCase()}_${subjectName.toLowerCase()}`;
+
+              const itemData = {
+                userId: user.uid,
+                subject: subjectName,
+                faculty: cls.faculty || '',
+                room: cls.room || '',
+                roomNodeId: matchedNodeId,
+                dayOfWeek: dayVal,
+                day: dayName,
+                startTime: startTimeStr,
+                endTime: endTimeStr
+              };
+
+              if (slotMap.has(normKey)) {
+                const existing = slotMap.get(normKey);
+                slotMap.set(normKey, { id: existing.id, data: { ...existing.data, ...itemData } });
+              } else {
+                slotMap.set(normKey, { id: null, data: itemData });
               }
             }
-            
-            const dayIndex = DAYS.findIndex(d => d.toLowerCase() === cls.day.toLowerCase());
-            
-            const docRef = doc(collection(db, 'timetables'));
-            batch.set(docRef, {
-              userId: user.uid,
-              subject: cls.subject || '',
-              faculty: cls.faculty || '',
-              room: cls.room || '',
-              roomNodeId: matchedNodeId,
-              dayOfWeek: dayIndex !== -1 ? dayIndex : 1, // default monday
-              day: dayIndex !== -1 ? DAYS[dayIndex] : 'Monday',
-              startTime: cls.startTime || '09:00',
-              endTime: cls.endTime || '10:00'
-            });
           }
-          await batch.commit();
-          alert(`Successfully added ${classes.length} classes!`);
         } catch (err) {
-          console.error("Firebase Function error:", err);
-          alert("Failed to parse image via AI.");
-        } finally {
-          setIsParsingAI(false);
+          console.error("AI timetable parsing failed for file:", file.name, err);
         }
-      };
-      reader.readAsDataURL(file);
+      }
+
+      if (totalAddedOrUpdated === 0) {
+        alert("Could not extract any classes from the uploaded image(s).");
+        setIsParsingAI(false);
+        return;
+      }
+
+      const batch = writeBatch(db);
+      for (const [normKey, item] of slotMap.entries()) {
+        if (item.id) {
+          batch.update(doc(db, 'timetables', item.id), item.data);
+        } else {
+          const docRef = doc(collection(db, 'timetables'));
+          item.id = docRef.id;
+          batch.set(docRef, item.data);
+        }
+      }
+      await batch.commit();
+
+      if (fetchTimetables) fetchTimetables();
+      alert(`Successfully processed ${files.length} timetable image(s) and auto-merged your schedule!`);
     } catch (err) {
-      console.error("File reading error:", err);
-      alert("Failed to read image.");
+      console.error("Timetable upload error:", err);
+      alert("Failed to process timetable image(s).");
+    } finally {
       setIsParsingAI(false);
+      e.target.value = null;
+    }
+  };
+
+  const handleClearAllTimetables = async () => {
+    if (!user) return;
+    if (!window.confirm("Are you sure you want to clear your entire timetable schedule? This action cannot be undone.")) return;
+
+    try {
+      const q = query(collection(db, 'timetables'), where('userId', '==', user.uid));
+      const snap = await getDocs(q);
+      const batch = writeBatch(db);
+      snap.docs.forEach(docSnap => {
+        batch.delete(docSnap.ref);
+      });
+
+      // Clear meta image doc if exists
+      batch.delete(doc(db, 'timetable_meta', user.uid));
+
+      await batch.commit();
+      if (setUploadedImageUrl) setUploadedImageUrl('');
+      if (fetchTimetables) fetchTimetables();
+      alert("Your entire timetable schedule has been cleared.");
+    } catch (err) {
+      console.error("Failed to clear timetable:", err);
+      alert("Failed to clear timetable schedule.");
     }
   };
 
@@ -217,34 +282,50 @@ export default function TimetableManager({ isOpen, onClose, user, nodes, timetab
         {/* Body */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
           
-          {/* Add New Class Form Toggle */}
+          {/* Add New Class Form Toggle & Actions */}
           {!showForm ? (
-            <div style={{ display: 'flex', gap: '12px' }}>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
               <button 
                 onClick={() => setShowForm(true)}
                 style={{
-                  flex: 1, padding: '12px', background: 'rgba(59, 130, 246, 0.1)', color: '#3B82F6',
-                  border: '1px dashed #3B82F6', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
-                  cursor: 'pointer', fontWeight: 'bold', transition: 'all 0.2s'
+                  flex: 1, padding: '12px 8px', background: 'rgba(59, 130, 246, 0.1)', color: '#3B82F6',
+                  border: '1px dashed #3B82F6', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                  cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', transition: 'all 0.2s'
                 }}
               >
-                <Plus size={18} /> Add Manually
+                <Plus size={16} /> Add Manually
               </button>
               
               <label style={{
-                flex: 1, padding: '12px', background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', color: 'white',
-                border: 'none', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
-                cursor: isParsingAI ? 'not-allowed' : 'pointer', fontWeight: 'bold', transition: 'all 0.2s', boxShadow: '0 4px 12px rgba(99, 102, 241, 0.3)'
+                flex: 1, padding: '12px 8px', background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', color: 'white',
+                border: 'none', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                cursor: isParsingAI ? 'not-allowed' : 'pointer', fontWeight: 'bold', fontSize: '13px', transition: 'all 0.2s', boxShadow: '0 4px 12px rgba(99, 102, 241, 0.3)'
               }}>
                 <input 
                   type="file" 
                   accept="image/*" 
+                  multiple
                   onChange={handleFileUpload} 
                   style={{ display: 'none' }} 
                   disabled={isParsingAI}
                 />
-                {isParsingAI ? <Loader2 size={18} className="animate-spin" /> : <><Plus size={18} /> AI Screenshot</>}
+                {isParsingAI ? <Loader2 size={16} className="animate-spin" /> : <><Plus size={16} /> AI Screenshot</>}
               </label>
+
+              {timetables && timetables.length > 0 && (
+                <button
+                  onClick={handleClearAllTimetables}
+                  style={{
+                    padding: '12px 14px', background: 'rgba(239, 68, 68, 0.15)', color: '#F87171',
+                    border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                    cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', transition: 'all 0.2s'
+                  }}
+                  title="Clear All Timetable Entries"
+                >
+                  <Trash2 size={16} />
+                  <span>Clear All</span>
+                </button>
+              )}
             </div>
           ) : (
             <div style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>

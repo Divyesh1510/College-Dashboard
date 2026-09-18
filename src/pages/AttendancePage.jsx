@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { X, Check, X as Cross, Loader2, UploadCloud, Save, Trash2, ArrowLeft, BarChart2, Clock, MapPin, Calendar } from 'lucide-react';
+import { X, Check, X as Cross, Loader2, UploadCloud, Save, Trash2, ArrowLeft, BarChart2, Clock, MapPin, Calendar, RotateCcw } from 'lucide-react';
 import { db, storage, auth } from '../utils/firebase';
 import { collection, deleteDoc, doc, updateDoc, writeBatch, query, where, getDocs } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
@@ -61,63 +61,134 @@ export default function AttendancePage() {
   };
 
   const handleFileUpload = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file || !user) return;
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0 || !user) return;
 
     setIsParsingAI(true);
     try {
-      const reader = new FileReader();
-      reader.onloadend = async () => {
-        const base64String = reader.result.split(',')[1];
-        
-        try {
-          const timestamp = Date.now();
-          const storageRef = ref(storage, `attendance_uploads/${user.uid}/${timestamp}.jpg`);
-          await uploadString(storageRef, base64String, 'base64', { contentType: file.type }).catch(e => console.error(e));
+      const functions = getFunctions();
+      const parseAttendance = httpsCallable(functions, 'parseAttendanceImage');
 
-          const functions = getFunctions();
-          const parseAttendance = httpsCallable(functions, 'parseAttendanceImage');
+      // Fetch existing attendance records from Firestore for smart merging
+      const q = query(collection(db, 'attendance'), where('userId', '==', user.uid));
+      const snap = await getDocs(q);
+
+      const subjectMap = new Map();
+      snap.docs.forEach(docSnap => {
+        const data = docSnap.data();
+        const normKey = (data.subject || '').trim().toLowerCase();
+        if (normKey) {
+          subjectMap.set(normKey, {
+            id: docSnap.id,
+            subject: data.subject.trim(),
+            totalClasses: parseInt(data.totalClasses) || 0,
+            attendedClasses: parseInt(data.attendedClasses) || 0
+          });
+        }
+      });
+
+      let parsedCount = 0;
+      for (const file of files) {
+        try {
+          const base64String = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result.split(',')[1]);
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+          });
+
+          const timestamp = Date.now();
+          const storageRef = ref(storage, `attendance_uploads/${user.uid}/${timestamp}_${Math.random().toString(36).substring(7)}.jpg`);
+          uploadString(storageRef, base64String, 'base64', { contentType: file.type }).catch(e => console.error(e));
+
           const result = await parseAttendance({
             base64Image: base64String,
             mimeType: file.type
           });
 
-          const extracted = result.data.attendance;
-          if (!extracted || extracted.length === 0) {
-            alert("Could not extract attendance from image.");
-            setIsParsingAI(false);
-            return;
-          }
+          const extracted = result.data?.attendance || [];
+          if (extracted.length > 0) {
+            parsedCount++;
+            for (const subj of extracted) {
+              if (!subj.subject) continue;
+              const normKey = subj.subject.trim().toLowerCase();
+              const total = parseInt(subj.totalClasses) || 0;
+              const attended = parseInt(subj.attendedClasses) || 0;
 
-          const batch = writeBatch(db);
-          const newItems = [];
-          for (const subj of extracted) {
-            const newRef = doc(collection(db, 'attendance'));
-            const data = {
-              userId: user.uid,
-              subject: subj.subject,
-              totalClasses: parseInt(subj.totalClasses) || 0,
-              attendedClasses: parseInt(subj.attendedClasses) || 0
-            };
-            batch.set(newRef, data);
-            newItems.push({ id: newRef.id, ...data });
+              if (subjectMap.has(normKey)) {
+                const existing = subjectMap.get(normKey);
+                existing.totalClasses = Math.max(existing.totalClasses, total);
+                existing.attendedClasses = Math.max(existing.attendedClasses, attended);
+              } else {
+                subjectMap.set(normKey, {
+                  id: null,
+                  subject: subj.subject.trim(),
+                  totalClasses: total,
+                  attendedClasses: attended
+                });
+              }
+            }
           }
-          await batch.commit();
-          setAttendanceList(prev => [...prev, ...newItems]);
-
         } catch (err) {
-          console.error("AI parsing failed:", err);
-          alert("Failed to parse image.");
-        } finally {
-          setIsParsingAI(false);
+          console.error("AI parsing failed for file:", file.name, err);
         }
-      };
-      reader.readAsDataURL(file);
+      }
+
+      if (parsedCount === 0) {
+        alert("Could not extract attendance from the uploaded image(s).");
+        setIsParsingAI(false);
+        return;
+      }
+
+      const batch = writeBatch(db);
+      for (const [normKey, item] of subjectMap.entries()) {
+        if (item.id) {
+          batch.update(doc(db, 'attendance', item.id), {
+            totalClasses: item.totalClasses,
+            attendedClasses: item.attendedClasses
+          });
+        } else {
+          const newRef = doc(collection(db, 'attendance'));
+          item.id = newRef.id;
+          batch.set(newRef, {
+            userId: user.uid,
+            subject: item.subject,
+            totalClasses: item.totalClasses,
+            attendedClasses: item.attendedClasses
+          });
+        }
+      }
+
+      await batch.commit();
+      setAttendanceList(Array.from(subjectMap.values()));
+      alert(`Successfully processed ${files.length} image(s) and auto-merged subjects!`);
     } catch (err) {
       console.error(err);
+      alert("Failed to process attendance image(s).");
+    } finally {
       setIsParsingAI(false);
+      e.target.value = null;
     }
-    e.target.value = null;
+  };
+
+  const handleClearAllAttendance = async () => {
+    if (!user) return;
+    if (!window.confirm("Are you sure you want to clear all your attendance records? This action cannot be undone.")) return;
+
+    try {
+      const q = query(collection(db, 'attendance'), where('userId', '==', user.uid));
+      const snap = await getDocs(q);
+      const batch = writeBatch(db);
+      snap.docs.forEach(docSnap => {
+        batch.delete(docSnap.ref);
+      });
+      await batch.commit();
+      setAttendanceList([]);
+      alert("All attendance records have been cleared.");
+    } catch (err) {
+      console.error("Failed to clear attendance:", err);
+      alert("Failed to clear attendance records.");
+    }
   };
 
   const handleUpdate = async (id, field, value) => {
@@ -267,10 +338,40 @@ export default function AttendancePage() {
           </h1>
         </div>
         
-        <div style={{ position: 'relative' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', position: 'relative' }}>
+          <button
+            onClick={handleClearAllAttendance}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '8px',
+              background: 'rgba(239, 68, 68, 0.15)',
+              border: '1px solid rgba(239, 68, 68, 0.35)',
+              color: '#F87171',
+              padding: '10px 18px',
+              borderRadius: '12px',
+              fontSize: '14px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              transition: 'all 0.2s ease',
+              boxShadow: '0 4px 12px rgba(239, 68, 68, 0.2)'
+            }}
+            onMouseOver={(e) => {
+              e.currentTarget.style.background = 'rgba(239, 68, 68, 0.28)';
+              e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.6)';
+            }}
+            onMouseOut={(e) => {
+              e.currentTarget.style.background = 'rgba(239, 68, 68, 0.15)';
+              e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.35)';
+            }}
+            title="Reset / Clear all attendance data"
+          >
+            <RotateCcw size={18} />
+            <span>Reset Attendance</span>
+          </button>
+
           <input
             type="file"
             accept="image/*"
+            multiple
             onChange={handleFileUpload}
             style={{ display: 'none' }}
             id="attendance-upload"
